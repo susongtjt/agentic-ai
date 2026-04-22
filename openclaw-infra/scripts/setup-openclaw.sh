@@ -228,10 +228,27 @@ else
     systemctl enable --now tailscaled
 fi
 
-# 添加公网 DNS（防止 MagicDNS 导致 Let's Encrypt 证书获取超时）
-if ! grep -q '8.8.8.8' /etc/resolv.conf 2>/dev/null; then
-    echo "nameserver 8.8.8.8" >> /etc/resolv.conf
-    echo "   已添加公网 DNS 8.8.8.8（用于 HTTPS 证书获取）"
+# 持久化添加公网 DNS（防止 MagicDNS 导致 Let's Encrypt 证书获取超时）
+# 注意：直接写 /etc/resolv.conf 会被云厂商 DHCP 续租覆盖，这里用 systemd-resolved 持久化
+if [ -d /run/systemd/resolve ]; then
+    # 使用 systemd-resolved（Ubuntu 24.04 默认）
+    mkdir -p /etc/systemd/resolved.conf.d
+    cat > /etc/systemd/resolved.conf.d/public-dns.conf << 'DNS_EOF'
+[Resolve]
+DNS=8.8.8.8 8.8.4.4
+DNS_EOF
+    systemctl restart systemd-resolved 2>/dev/null || true
+    echo "   已通过 systemd-resolved 持久化公网 DNS 8.8.8.8"
+else
+    # 无 systemd-resolved 的系统，回退到直接写入 + 锁定文件
+    if ! grep -q '8.8.8.8' /etc/resolv.conf 2>/dev/null; then
+        # 先解锁（如果之前锁过）
+        chattr -i /etc/resolv.conf 2>/dev/null || true
+        echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+        # 锁定文件防止 DHCP 覆盖
+        chattr +i /etc/resolv.conf 2>/dev/null || true
+        echo "   已添加公网 DNS 8.8.8.8 并锁定 resolv.conf"
+    fi
 fi
 
 echo ""
